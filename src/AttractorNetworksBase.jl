@@ -221,22 +221,16 @@ function spectral_abscissa(u,rn::RecurrentNetwork)
 end
 
 
-
-
 """
     run_network(x0,t_max,rn::RecurrentNetwork; rungekutta=false,verbose=false)
 
 """
-function run_network(x0,t_max,rn::RecurrentNetwork; rungekutta=false,verbose=false)
-    f(du,u,p,t) = copyto!(du, velocity(u,rn) )
+function run_network(x0::AbstractVector,t_max,rn::RecurrentNetwork;
+            verbose::Bool=false)
+    ode_solver = Tsit5()
+    f(du,u,p,t) = velocity!(du,u,rn)
     prob = ODEProblem(f,x0,(0.,t_max))
-    out = if rungekutta
-            solve(prob,RK4();verbose=verbose)
-        else
-            # solve(prob,Rodas4(autodiff=false))
-            solve(prob,Tsit5();verbose=verbose)
-        end
-    out
+    return solve(prob,ode_solver;verbose=verbose)
 end
 
 
@@ -257,25 +251,25 @@ function run_network_to_convergence(u0, rn::RecurrentNetwork ;
     n=length(u0) |> Float64
     function  condition(u,t,integrator)
         v = get_du(integrator)
-        norm(v) / n < veltol
+        return norm(v) / n < veltol
     end
     function affect!(integrator)
         savevalues!(integrator)
-        terminate!(integrator)
+        return terminate!(integrator)
     end
     cb=DiscreteCallback(condition,affect!)
-
-    f(du,u,p,t) = copyto!(du, velocity(u,rn) )
+    ode_solver = Tsit5()
+    f(du,u,p,t) = velocity!(du,u,rn)
     prob = ODEProblem(f,u0,(0.,t_max))
     out = solve(prob,Tsit5();verbose=false,callback=cb)
     u_out = out.u[end]
     t_out = out.t[end]
-    if isapprox(t_out,t_max; atol=0.1)
-        @warn "no convergence after time $t_max"
+    if isapprox(t_out,t_max; atol=0.05)
+        @warn "no convergence after max time $t_max"
         vel = velocity(u_out,rn)
         @info "the norm (divided by n) of the velocity is $(norm(vel)/n) "
     end
-    u_out
+    return u_out
 end
 
 

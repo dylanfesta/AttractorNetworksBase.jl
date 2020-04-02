@@ -53,4 +53,13 @@ sum(W[pe,pe]; dims=2)
 
 ne,ni = 13,10
 ntot = ne+ni
-ntw = A.RecurrentNetwork(ne,ni ; gfun=A.GFQuad(0.123) )
+ntw = A.RecurrentNetwork(ne,ni ; gfun=A.GFQuad(0.02))
+
+whatevs = A.run_network(10.0 .* rand(ntot), 0.5,ntw)
+
+using Plots; theme(:dark)
+_ = let t=whatevs.t,
+  u12 = [ uu[1:2] for uu in whatevs.u]
+  u12=hcat(u12...) |> permutedims
+  plot(t,u12;leg=false,linewidth=4)
+end

@@ -1,11 +1,10 @@
 *.jl.*.cov
 *.jl.cov
 *.jl.mem
-*.directory
+.directory
 .DS_Store
 /Manifest.toml
 test/Manifest.toml
 /dev/
 /docs/build/
 /docs/site/
-*.directory
