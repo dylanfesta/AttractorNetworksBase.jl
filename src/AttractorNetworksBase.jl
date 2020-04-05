@@ -1,7 +1,6 @@
 module AttractorNetworksBase
 using LinearAlgebra
 using Distributions, Random
-using DifferentialEquations
 # numerical defaults for the constructors
 const default_values = Dict(
     :muw=>3.0,
@@ -220,6 +219,10 @@ function spectral_abscissa(u,rn::RecurrentNetwork)
     return maximum(real.(eigvals(J)))
 end
 
+#=
+
+These should go somewhere else, to avoid the heavy dependency with
+DifferentialEquations !!!
 
 """
     run_network(x0,t_max,rn::RecurrentNetwork; rungekutta=false,verbose=false)
@@ -271,6 +274,6 @@ function run_network_to_convergence(u0, rn::RecurrentNetwork ;
     end
     return u_out
 end
-
+=#
 
 end # module
