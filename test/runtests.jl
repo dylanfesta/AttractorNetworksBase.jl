@@ -20,10 +20,12 @@ const _rtol = 1E-4
     # quadratic
     x = 3 .* randn(1_000)
     g = A.GFQuad(1+rand())
+    y = g.(x)
+    @test all( y .> 0.0)
     xdest = similar(x)
     A.g!(xdest,x,g)
-    @test all( isapprox.(xdest, g.(x)))
-    @test all(isapprox.(A.ig.(g.(x),g),x ; rtol=_rtol))
+    @test all( isapprox.(xdest,y))
+    @test all(isapprox.(A.ig.(y,g),x ; rtol=_rtol))
     dgnum = Calculus.gradient.(_x->g(_x),x)
     A.dg!(xdest,x,g)
     @test all(isapprox.(xdest,dgnum; rtol=_rtol))
@@ -59,6 +61,7 @@ end
     ni = 10
     ntw = A.RecurrentNetwork(ne,ni ; gfun=A.GFQuad(0.123) )
     @test all( size(ntw.weights) .== (ne+ni) )
+    @test A.n_neurons(ntw) == (ne+ni)
 end
 
 
@@ -68,7 +71,7 @@ end
     ntot = ne+ni
     ntw = A.RecurrentNetwork(ne,ni ; gfun=A.GFQuad(0.123) )
     v_alloc = zeros(ntot)
-    veli(u,i) = let v = A.velocity!(v_alloc,u,ntw) ; v[i]; end
+    veli(u,i) = let v = A.velocity!(v_alloc,u,ntw.gain_function.(u),ntw) ; v[i]; end
     @info "building the Jacobian numerically"
     utest = randn(ntot)
     Jnum = Matrix{Float64}(undef,ntot,ntot)

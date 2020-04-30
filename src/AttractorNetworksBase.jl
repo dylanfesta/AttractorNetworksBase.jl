@@ -33,12 +33,12 @@ ig(y,gf::GFQuad) = log( exp( sqrt(y/gf.α) ) - 1.0 )
 
 @inline function dg(x,gf::GFQuad)
     ex= exp(x)
-    gf.α * 2.0ex*log(1. + ex)/(1. + ex)
+    return gf.α * 2.0ex*log(1. + ex)/(1. + ex)
 end
 @inline function ddg(x,gf::GFQuad)
     ex= exp(x)
     oex= 1. + ex
-    2.0*gf.α*ex*(log(oex)+ex) / (oex*oex)
+    return 2.0*gf.α*ex*(log(oex)+ex) / (oex*oex)
 end
 
 (gf::GFId)(x) = x
@@ -142,11 +142,11 @@ struct RecurrentNetwork{M,G,V}
     external_input::V
 end
 
-n_neurons(rn::RecurrentNetwork) = size(rm.weights,1)
-function Base.copy(rn::RecurrentNetwork)
-   return RecurrentNetwork( copy(rm.weights), rn.gain_function,
-        copy(rn.membrane_taus) , copy(rn.external_input) )
-end
+Base.copy(ntw::RecurrentNetwork) = RecurrentNetwork( (copy(getfield(ntw,n))
+                for n in fieldnames(RecurrentNetwork) )...)
+
+n_neurons(rn::RecurrentNetwork) = size(rn.weights,1)
+
 
 function RecurrentNetwork(ne::I,ni::I;
         gfun::Union{Nothing,G}=nothing,
@@ -187,14 +187,14 @@ function RecurrentNetwork(ne::I,ni::I;
    return RecurrentNetwork(W,gfun,taus,h)
 end
 
-function velocity!(v_out,u,rn::RecurrentNetwork)
-    gu = rn.gain_function.(u)
+function velocity!(v_out,u,gu,rn::RecurrentNetwork)
     copy!(v_out, rn.external_input)
     v_out .-= u  #  v_out <-  - u +  h
     LinearAlgebra.BLAS.gemv!('N',1.0,rn.weights,gu,1.0,v_out) # W*g(v) - v + h
     return v_out ./= rn.membrane_taus # ( W*g(v) - v + h) / taus
 end
-velocity(u,rn) = velocity!(similar(u),u,rn)
+velocity(u,rn) = velocity!(similar(u),u,rn.gain_function.(u), rn)
+
 
 """
         jacobian!(J,u,rn::RecurrentNetwork)
