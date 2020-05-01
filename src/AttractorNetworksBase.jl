@@ -201,16 +201,20 @@ velocity(u,rn) = velocity!(similar(u),u,rn.gain_function.(u), rn)
 Writes the Jacobian matrix of the system dynamics into J
 It might be useful to re-normalize the Jacobian by the mean of the time constants.
 """
-function jacobian!(J,u,rn::RecurrentNetwork)
+jacobian!(J,u,rn::RecurrentNetwork) = _jacobian!(J,u,similar(u),rn::RecurrentNetwork)
+
+# no vector allocation
+function _jacobian!(J,u,_dg,rn::RecurrentNetwork)
     n = size(J,1)
-    _dg =  dg.(u,rn.gain_function)
-    broadcast!(*,J, rn.weights, Transpose(_dg)) # multiply columnwise
+    dg!(_dg,u,rn.gain_function)
+    broadcast!(*,J, rn.weights, transpose(_dg)) # multiply columnwise
     @simd for i in 1:n
         @inbounds J[i,i] -= 1.0 #subtract diagonal
     end
     #normalize by taus, rowwise
     return broadcast!(/,J,J,rn.membrane_taus)
 end
+
 
 jacobian(u,rn) = jacobian!(similar(rn.weights),u,rn)
 
