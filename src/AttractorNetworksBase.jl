@@ -15,6 +15,7 @@ const default_values = Dict(
 
 abstract type GainFunction end
 Base.Broadcast.broadcastable(g::GainFunction)=Ref(g)
+Base.copy(g::GainFunction) = g
 struct GFQuad{T} <: GainFunction where T
     α::T
 end
@@ -196,27 +197,55 @@ end
 velocity(u,rn) = velocity!(similar(u),u,rn.gain_function.(u), rn)
 
 
-"""
-        jacobian!(J,u,rn::RecurrentNetwork)
-Writes the Jacobian matrix of the system dynamics into J
-It might be useful to re-normalize the Jacobian by the mean of the time constants.
-"""
-jacobian!(J,u,rn::RecurrentNetwork) = _jacobian!(J,u,similar(u),rn::RecurrentNetwork)
 
-# no vector allocation
-function _jacobian!(J,u,_dg,rn::RecurrentNetwork)
-    n = size(J,1)
-    dg!(_dg,u,rn.gain_function)
-    broadcast!(*,J, rn.weights, transpose(_dg)) # multiply columnwise
-    @simd for i in 1:n
+# Jacobian stuff ! Compute and derivatives!
+# let's define (and test) the derivatives of the jacobian here!
+
+struct JGradPars{M,V}
+    weights::M
+    u::M
+    inv_taus::V
+    ddgu_alloc::V
+    function JGradPars(ntw::RecurrentNetwork)
+        w = similar(ntw.weights)
+        u = similar(ntw.weights)
+        v = similar(ntw.membrane_taus)
+        ddgu_alloc = similar(v)
+        new{typeof(w),typeof(v)}(w,u,inv.(ntw.membrane_taus),ddgu_alloc)
+    end
+end
+
+function _jacobian!(J,gradpars::Union{Nothing,JGradPars},
+            u,dgu,ntw::RecurrentNetwork)
+    broadcast!(*,J, ntw.weights, transpose(dgu)) # multiply columnwise
+    @simd for i in 1:size(J,1)
         @inbounds J[i,i] -= 1.0 #subtract diagonal
     end
     #normalize by taus, rowwise
-    return broadcast!(/,J,J,rn.membrane_taus)
+    broadcast!(/,J,J,ntw.membrane_taus)
+    isnothing(gradpars) && return J
+    # GRADIENTS !  W first
+    gradpars.weights .= gradpars.inv_taus * transpose(dgu)
+    #broadcast!(/,gradpars.weights,transpose(dgu),ntw.membrane_taus)
+    # now u
+    ddg!(gradpars.ddgu_alloc,u,ntw.gain_function)
+    broadcast!(*,gradpars.u,gradpars.inv_taus,
+        ntw.weights, transpose(gradpars.ddgu_alloc))
+    return J
+end
+
+"""
+        jacobian(u,rn::RecurrentNetwork)
+Jacobian matrix of the
+"""
+@inline function jacobian(u,rn::RecurrentNetwork)
+    J = similar(rn.weights)
+    dgu = dg.(u,rn.gain_function)
+    return _jacobian!(J,nothing,u,dgu,rn::RecurrentNetwork)
 end
 
 
-jacobian(u,rn) = jacobian!(similar(rn.weights),u,rn)
+
 
 function spectral_abscissa(u,rn::RecurrentNetwork)
     J=jacobian(u,rn)

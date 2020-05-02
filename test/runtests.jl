@@ -4,6 +4,54 @@ using Calculus,LinearAlgebra
 
 const _rtol = 1E-4
 
+
+function test_Jgradient_weights(utest,ntw::A.RecurrentNetwork)
+    J=A.jacobian(utest,ntw)
+    gpars = A.JGradPars(ntw)
+    # analytic gradient
+    dgu = A.dg.(utest,ntw.gain_function)
+    A._jacobian!(J,gpars,utest,dgu,ntw)
+    grad_ana = vec(gpars.weights)
+    # numerical gradient
+    ntw2 = copy(ntw)
+    grad_num = similar(grad_ana)
+    for ij in eachindex(ntw2.weights)
+        function miniobj(w)
+            ntw2.weights[ij] = w
+            return A.jacobian(utest,ntw2)[ij]
+        end
+        grad_num[ij] = Calculus.gradient(miniobj,ntw2.weights[ij])
+    end
+    return grad_ana,grad_num
+end
+
+function test_Jgradient_u(utest,ntw::A.RecurrentNetwork)
+    J=A.jacobian(utest,ntw)
+    gpars = A.JGradPars(ntw)
+    # analytic gradient
+    dgu = A.dg.(utest,ntw.gain_function)
+    A._jacobian!(J,gpars,utest,dgu,ntw)
+    grad_ana = vec(gpars.u)
+    # numerical gradient
+    grad_num = similar(gpars.u)
+    for lj in CartesianIndices(gpars.u)
+        (j,l)=Tuple(lj)
+        function miniobj(u)
+            u2 = copy(utest)
+            u2[l]=u
+            return A.jacobian(u2,ntw)[lj]
+        end
+        grad_num[lj] = Calculus.gradient(miniobj,utest[l])
+    end
+    grad_num = vec(grad_num)
+    return grad_ana,grad_num
+end
+
+
+
+
+##
+
 @testset "Gain functions" begin
     # identity
     g = A.GFId()
@@ -80,4 +128,17 @@ end
     end
     Jan=A.jacobian(utest,ntw)
     @test all(isapprox.(Jnum,Jan;rtol=1E-4))
+end
+
+@testset "Jacobian gradients" begin
+    ne,ni = 13,10
+    ntot = ne+ni
+    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.GFQuad(0.123) )
+    utest = randn(ntot)
+    # weights
+    grad_ana,grad_num = test_Jgradient_weights(utest,ntw)
+    @test all(isapprox.(grad_ana,grad_num;rtol=1E-4))
+    #currents
+    grad_ana,grad_num = test_Jgradient_u(utest,ntw)
+    @test all(isapprox.(grad_ana,grad_num;rtol=1E-4))
 end
