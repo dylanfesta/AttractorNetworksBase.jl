@@ -244,12 +244,36 @@ Jacobian matrix of the
     return _jacobian!(J,nothing,u,dgu,rn::RecurrentNetwork)
 end
 
-
-
-
 function spectral_abscissa(u,rn::RecurrentNetwork)
     J=jacobian(u,rn)
     return maximum(real.(eigvals(J)))
 end
+
+# let's generate the attractors here
+
+
+"""
+        lognorm_reparametrize(m,std) -> distr::LogNormal
+# parameters
+  + `m`   sample mean
+  + `std` sample std
+"""
+function lognorm_reparametrize(m,std)
+    vm2= (std/m)^2
+    μ = log(m / sqrt(1. + vm2))
+    σ = sqrt(log( 1. + vm2))
+    return LogNormal(μ,σ)
+end
+
+function make_attractors(ntot,natt,gainf::GainFunction;
+        mu_r=5.0,std_r=2.0)
+    distr = lognorm_reparametrize(mu_r,std_r)
+    attr_r = rand(distr,(ntot,natt))
+    attr_u = ig.(attr_r,gainf)
+    return (attr_r,attr_u)
+end
+make_attractors(ntot,natt,ntw::RecurrentNetwork;mu_r=5.0,std_r=2.0) =
+    make_attractors(ntot,natt,ntw.gain_function;mu_r=mu_r,std_r=std_r)
+
 
 end # module
