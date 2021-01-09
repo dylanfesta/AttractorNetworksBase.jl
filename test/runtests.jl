@@ -9,7 +9,7 @@ function test_Jgradient_weights(utest,ntw::A.RecurrentNetwork)
     J=A.jacobian(utest,ntw)
     gpars = A.JGradPars(ntw)
     # analytic gradient
-    dgu = A.dg.(utest,ntw.gain_function)
+    dgu = A.ioprime.(utest,ntw.iofunction)
     A._jacobian!(J,gpars,utest,dgu,ntw)
     grad_ana = vec(gpars.weights)
     # numerical gradient
@@ -29,7 +29,7 @@ function test_Jgradient_u(utest,ntw::A.RecurrentNetwork)
     J=A.jacobian(utest,ntw)
     gpars = A.JGradPars(ntw)
     # analytic gradient
-    dgu = A.dg.(utest,ntw.gain_function)
+    dgu = A.ioprime.(utest,ntw.iofunction)
     A._jacobian!(J,gpars,utest,dgu,ntw)
     grad_ana = vec(gpars.u)
     # numerical gradient
@@ -54,31 +54,27 @@ end
 
 @testset "Gain functions" begin
     # identity
-    g = A.GFId()
+    g = A.IOId{Float64}()
     x = randn(1_000)
-    xdest = similar(x)
     @test all(isapprox.(g.(x),x))
-    @test all(isapprox.(A.ig.(x,g),x))
-    A.g!(xdest,x,g)
-    @test all(isapprox.(xdest,x))
-    A.dg!(xdest,x,g)
+    @test all(isapprox.(A.ioinv.(x,g),x))
+    xdest = A.ioprime.(x,g)
     @test all(isapprox.(xdest,1.0))
-    A.ddg!(xdest,x,g)
+    xdest = A.ioprimeprime.(x,g)
     @test all(isapprox.(xdest,0.0))
     # quadratic
     x = 3 .* randn(1_000)
-    g = A.GFQuad(1+rand())
+    g = A.IOQuad(1+rand())
     y = g.(x)
     @test all( y .> 0.0)
-    xdest = similar(x)
-    A.g!(xdest,x,g)
+    xdest = g.(x)
     @test all( isapprox.(xdest,y))
-    @test all(isapprox.(A.ig.(y,g),x ; rtol=_rtol))
+    @test all(isapprox.(A.ioinv.(y,g),x ; rtol=_rtol))
     dgnum = Calculus.gradient.(_x->g(_x),x)
-    A.dg!(xdest,x,g)
+    xdest=A.ioprime.(x,g)
     @test all(isapprox.(xdest,dgnum; rtol=_rtol))
-    ddgnum = Calculus.gradient.(_x->A.dg(_x,g),x)
-    A.ddg!(xdest,x,g)
+    ddgnum = Calculus.gradient.(_x->A.ioprime(_x,g),x)
+    xdest=A.ioprimeprime.(x,g)
     @test all(isapprox.(xdest,ddgnum; rtol=_rtol))
 end
 
@@ -107,7 +103,7 @@ end
 @testset "Network constructor" begin
     ne = 13
     ni = 10
-    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.GFQuad(0.123) )
+    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
     @test all( size(ntw.weights) .== (ne+ni) )
     @test A.n_neurons(ntw) == (ne+ni)
 end
@@ -117,9 +113,9 @@ end
 @testset "Jacobian matrix" begin
     ne,ni = 13,10
     ntot = ne+ni
-    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.GFQuad(0.123) )
+    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
     v_alloc = zeros(ntot)
-    veli(u,i) = let v = A.velocity!(v_alloc,u,ntw.gain_function.(u),ntw) ; v[i]; end
+    veli(u,i) = let v = A.velocity!(v_alloc,u,ntw.iofunction.(u),ntw) ; v[i]; end
     @info "building the Jacobian numerically"
     utest = randn(ntot)
     Jnum = Matrix{Float64}(undef,ntot,ntot)
@@ -133,7 +129,7 @@ end
 @testset "Jacobian gradients" begin
     ne,ni = 13,10
     ntot = ne+ni
-    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.GFQuad(0.123) )
+    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
     utest = randn(ntot)
     # weights
     grad_ana,grad_num = test_Jgradient_weights(utest,ntw)
@@ -141,4 +137,20 @@ end
     #currents
     grad_ana,grad_num = test_Jgradient_u(utest,ntw)
     @test all(isapprox.(grad_ana,grad_num;rtol=1E-4))
+end
+
+@testset "Dynamics" begin
+    ne,ni = 20,23
+    ntot = ne+ni
+    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+    fill!(ntw.weights,0.0)
+    u_start = randn(A.ndims(ntw))
+    r_start = ntw.iofunction.(u_start)
+    u_end,_=A.run_network_to_convergence(ntw,r_start)
+    @test all(isapprox.(u_end,ntw.external_input;atol=0.05))
+    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+    r_start = ntw.iofunction.(u_start)
+    u_end,r_end=A.run_network_to_convergence(ntw,r_start)
+    t,ut,rt=A.run_network(ntw,r_end,1.0)
+    @test all(isapprox.(u_end,ut[:,end];atol=0.05))
 end

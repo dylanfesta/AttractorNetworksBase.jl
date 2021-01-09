@@ -1,8 +1,10 @@
-using Calculus
 using Pkg
 Pkg.activate(joinpath(@__DIR__(),".."))
 using Plots
 using AttractorNetworksBase ; const A = AttractorNetworksBase
+using Calculus
+using BenchmarkTools, Cthulhu
+using Test
 
 ##
 
@@ -49,11 +51,30 @@ function test_Jgradient_u(utest,ntw::A.RecurrentNetwork)
 end
 
 
+##
+
+ne,ni = 20,23
+ntot = ne+ni
+ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+fill!(ntw.weights,0.0)
+u_start = randn(A.ndims(ntw))
+r_start = ntw.iofunction.(u_start)
+
+u_end,r_end=A.run_network_to_convergence(ntw,r_start)
+@test all(isapprox.(u_end,ntw.external_input;atol=0.05))
+
+ne,ni = 20,23
+ntot = ne+ni
+ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+u_start = randn(A.ndims(ntw))
+r_start = ntw.iofunction.(u_start)
+u_end,r_end=A.run_network_to_convergence(ntw,r_start)
+t,ut,rt=A.run_network(ntw,r_end,1.0)
+@test all(isapprox.(u_end,ut[:,end];atol=0.05))
 
 ##
-using Cthulhu
 
-gtest = A.GFQuad(1.133)
+gtest = A.IOQuad(1.133)
 
 gtest(0.0)
 
@@ -63,6 +84,22 @@ plot(x->gtest(x),xtest ; leg=false, linewidth=3)
 
 
 descend_code_warntype(gtest,Tuple{Float64})
+##
+
+ne,ni = 20,23
+ntot = ne+ni
+ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+xtest = range(-1,5.0 ; length=100)
+xfill = similar(xtest)
+A.iofun!(similar(xtest),xtest,ntw)
+A.iofunB!(similar(xtest),xtest,ntw)
+
+@btime A.iofun!($xfill,$xtest,$ntw)
+@btime A.ioprime!($xfill,$xtest,$ntw)
+
+
+@btime A.iofunB!($xfill,$xtest,$ntw)
+
 
 ##
 Wtest = A.make_wmat(80,20,A.WDalian)
@@ -109,7 +146,8 @@ sum(W[pe,pe]; dims=2)
 
 ne,ni = 4,3
 ntot = ne+ni
-ntw = A.RecurrentNetwork(ne,ni ; gfun=A.GFQuad(0.02))
+ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+
 utest = randn(ntot)
 
 grad_ana,grad_num = test_Jgradient_weights(utest,ntw)
