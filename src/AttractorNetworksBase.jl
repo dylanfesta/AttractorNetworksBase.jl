@@ -283,9 +283,8 @@ function AttractorNetwork(bn::BaseNetwork{R},attr::Matrix{R}) where R
         bn.membrane_taus,bn.external_input)
 end
 
-
-function velocity!(dest::V,u::V,gu::V,
-        rn::RecurrentNetwork{R}) where {R<:Real,V<:Vector{R}}
+function velocity!(dest::AbsrtractVector{R},u::AbstractVector{R},
+        gu::AbstractVector{R},rn::RecurrentNetwork{R}) where {R<:Real,V<:Vector{R}}
     copy!(dest, rn.external_input)
     dest .-= u  #  v_out <-  - u +  h
     LinearAlgebra.BLAS.gemv!('N',1.0,rn.weights,gu,1.0,dest) # W*g(v) - v + h
