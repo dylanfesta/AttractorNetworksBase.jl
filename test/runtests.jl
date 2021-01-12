@@ -1,11 +1,11 @@
 using AttractorNetworksBase ; const A=AttractorNetworksBase
 using Test
-using Calculus,LinearAlgebra
-
+using Calculus,LinearAlgebra,Statistics
+using Random
 const _rtol = 1E-4
+Random.seed!(1)
 
-
-function test_Jgradient_weights(utest,ntw::A.RecurrentNetwork)
+function test_Jgradient_weights(utest,ntw::A.BaseNetwork)
     J=A.jacobian(utest,ntw)
     gpars = A.JGradPars(ntw)
     # analytic gradient
@@ -25,7 +25,7 @@ function test_Jgradient_weights(utest,ntw::A.RecurrentNetwork)
     return grad_ana,grad_num
 end
 
-function test_Jgradient_u(utest,ntw::A.RecurrentNetwork)
+function test_Jgradient_u(utest,ntw::A.BaseNetwork)
     J=A.jacobian(utest,ntw)
     gpars = A.JGradPars(ntw)
     # analytic gradient
@@ -103,7 +103,7 @@ end
 @testset "Network constructor" begin
     ne = 13
     ni = 10
-    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
+    ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
     @test all( size(ntw.weights) .== (ne+ni) )
     @test A.n_neurons(ntw) == (ne+ni)
 end
@@ -113,7 +113,7 @@ end
 @testset "Jacobian matrix" begin
     ne,ni = 13,10
     ntot = ne+ni
-    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
+    ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
     v_alloc = zeros(ntot)
     veli(u,i) = let v = A.velocity!(v_alloc,u,ntw.iofunction.(u),ntw) ; v[i]; end
     @info "building the Jacobian numerically"
@@ -129,7 +129,7 @@ end
 @testset "Jacobian gradients" begin
     ne,ni = 13,10
     ntot = ne+ni
-    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
+    ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
     utest = randn(ntot)
     # weights
     grad_ana,grad_num = test_Jgradient_weights(utest,ntw)
@@ -142,15 +142,27 @@ end
 @testset "Dynamics" begin
     ne,ni = 20,23
     ntot = ne+ni
-    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+    ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.02))
     fill!(ntw.weights,0.0)
     u_start = randn(A.ndims(ntw))
     r_start = ntw.iofunction.(u_start)
     u_end,_=A.run_network_to_convergence(ntw,r_start)
     @test all(isapprox.(u_end,ntw.external_input;atol=0.05))
-    ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+    ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.02))
     r_start = ntw.iofunction.(u_start)
     u_end,r_end=A.run_network_to_convergence(ntw,r_start)
     t,ut,rt=A.run_network(ntw,r_end,1.0)
     @test all(isapprox.(u_end,ut[:,end];atol=0.05))
+end
+
+@testset "Making attractors" begin
+    ne,ni = 200,100
+    natt=400
+    ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(1.23))
+    ntw = A.AttractorNetwork(natt,ne,ni ;
+        gfun=A.IOQuad(3.45),mu_attr=3.23,std_attr=2.2)
+    attr_u = ntw.attractors_u
+    attr_r = ntw.iofunction.(attr_u)
+    @test isapprox(mean(attr_r),3.23;atol=0.05)
+    @test isapprox(std(attr_r),2.2;atol=0.1)
 end

@@ -4,15 +4,18 @@ using Plots
 using AttractorNetworksBase ; const A = AttractorNetworksBase
 using Calculus
 using BenchmarkTools, Cthulhu
+using Random
 using Test
+using Statistics
+Random.seed!(0)
 
 ##
 
-function test_Jgradient_weights(utest,ntw::A.RecurrentNetwork)
+function test_Jgradient_weights(utest,ntw::A.BaseNetwork)
     J=A.jacobian(utest,ntw)
     gpars = A.JGradPars(ntw)
     # analytic gradient
-    dgu = A.dg.(utest,ntw.gain_function)
+    dgu = A.dg.(utest,ntw.iofunction)
     A._jacobian!(J,gpars,utest,dgu,ntw)
     grad_ana = vec(gpars.weights)
     # numerical gradient
@@ -28,11 +31,11 @@ function test_Jgradient_weights(utest,ntw::A.RecurrentNetwork)
     return grad_ana,grad_num
 end
 
-function test_Jgradient_u(utest,ntw::A.RecurrentNetwork)
+function test_Jgradient_u(utest,ntw::A.BaseNetwork)
     J=A.jacobian(utest,ntw)
     gpars = A.JGradPars(ntw)
     # analytic gradient
-    dgu = A.dg.(utest,ntw.gain_function)
+    dgu = A.dg.(utest,ntw.iofunction)
     A._jacobian!(J,gpars,utest,dgu,ntw)
     grad_ana = vec(gpars.u)
     # numerical gradient
@@ -53,9 +56,26 @@ end
 
 ##
 
+
+ne,ni = 200,100
+natt=400
+ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(1.23))
+ntw = A.AttractorNetwork(natt,ne,ni ;
+    gfun=A.IOQuad(3.45),mu_attr=3.23,std_attr=2.2)
+attr_u = ntw.attractors_u
+attr_r = ntw.iofunction.(attr_u)
+
+@test isapprox(mean(attr_r),3.23;atol=0.05)
+@test isapprox(std(attr_r),2.2;atol=0.1)
+
+
+
+##
+
+
 ne,ni = 20,23
 ntot = ne+ni
-ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.02))
 fill!(ntw.weights,0.0)
 u_start = randn(A.ndims(ntw))
 r_start = ntw.iofunction.(u_start)
@@ -65,7 +85,7 @@ u_end,r_end=A.run_network_to_convergence(ntw,r_start)
 
 ne,ni = 20,23
 ntot = ne+ni
-ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.02))
 u_start = randn(A.ndims(ntw))
 r_start = ntw.iofunction.(u_start)
 u_end,r_end=A.run_network_to_convergence(ntw,r_start)
@@ -88,7 +108,7 @@ descend_code_warntype(gtest,Tuple{Float64})
 
 ne,ni = 20,23
 ntot = ne+ni
-ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.02))
 xtest = range(-1,5.0 ; length=100)
 xfill = similar(xtest)
 A.iofun!(similar(xtest),xtest,ntw)
@@ -146,7 +166,7 @@ sum(W[pe,pe]; dims=2)
 
 ne,ni = 4,3
 ntot = ne+ni
-ntw = A.RecurrentNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.02))
 
 utest = randn(ntot)
 

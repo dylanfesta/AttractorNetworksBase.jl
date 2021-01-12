@@ -166,18 +166,33 @@ function make_wmat(ne::I,ni::I,wmeanf::M ; noautapses=true) where
     return W
 end
 
-struct RecurrentNetwork{R}
+abstract type RecurrentNetwork{R} end
+
+struct BaseNetwork{R} <: RecurrentNetwork{R}
     weights::Matrix{R}
     iofunction::IOFunction{R}
     membrane_taus::Vector{R}
     external_input::Vector{R}
 end
-#Base.Broadcast.broadcastable(g::RecurrentNetwork)=Ref(g)
-Base.copy(ntw::RecurrentNetwork) = RecurrentNetwork( (copy(getfield(ntw,n))
-                for n in fieldnames(RecurrentNetwork) )...)
+struct AttractorNetwork{R} <: RecurrentNetwork{R}
+    weights::Matrix{R}
+    iofunction::IOFunction{R}
+    attractors_u::Matrix{R}
+    membrane_taus::Vector{R}
+    external_input::Vector{R}
+end
 
 n_neurons(rn::RecurrentNetwork) = size(rn.weights,1)
 Base.ndims(rn::RecurrentNetwork)=n_neurons(rn)
+
+#Base.Broadcast.broadcastable(g::RecurrentNetwork)=Ref(g)
+
+Base.copy(ntw::BaseNetwork{R}) where R =
+    BaseNetwork{R}( (copy(getfield(ntw,n))
+        for n in fieldnames(BaseNetwork) )...)
+Base.copy(ntw::AttractorNetwork{R}) where R =
+    AttractorNetwork{R}( (copy(getfield(ntw,n))
+                for n in fieldnames(AttractorNetwork) )...)
 
 @inline function iofun!(dest::Vector{R},u::AbstractVector{R},
     nt::RecurrentNetwork{R}) where R<:Real
@@ -225,7 +240,7 @@ function normalize_membrane_taus!(v::Vector{R},ntw::RecurrentNetwork{R}) where R
     return v
 end
 
-function RecurrentNetwork(ne::I,ni::I;
+function BaseNetwork(ne::I,ni::I;
         gfun::Union{Nothing,G}=nothing,
         taus::Union{Nothing,V}=nothing,
         external_current::Union{Nothing,V}=nothing,
@@ -261,8 +276,13 @@ function RecurrentNetwork(ne::I,ni::I;
             fill(default_values[:external_current],ne+ni) )
     # gain
     gfun = something(gfun, IOQuad(default_values[:gainalpha]))
-   return RecurrentNetwork(W,gfun,taus,h)
+   return BaseNetwork(W,gfun,taus,h)
 end
+function AttractorNetwork(bn::BaseNetwork{R},attr::Matrix{R}) where R
+    return AttractorNetwork{R}(bn.weights,bn.iofunction,attr,
+        bn.membrane_taus,bn.external_input)
+end
+
 
 function velocity!(dest::V,u::V,gu::V,
         rn::RecurrentNetwork{R}) where {R<:Real,V<:Vector{R}}
@@ -283,13 +303,13 @@ struct JGradPars{R}
     u::Matrix{R}
     inv_taus::Vector{R}
     ddgu_alloc::Vector{R}
-    function JGradPars(ntw::RecurrentNetwork{R}) where R
-        w = similar(ntw.weights)
-        u = similar(ntw.weights)
-        v = similar(ntw.membrane_taus)
-        ddgu_alloc = similar(v)
-        new{R}(w,u,inv.(ntw.membrane_taus),ddgu_alloc)
-    end
+end
+function JGradPars(ntw::Union{AttractorNetwork{R},BaseNetwork{R}}) where R
+    w = similar(ntw.weights)
+    u = similar(ntw.weights)
+    v = similar(ntw.membrane_taus)
+    ddgu_alloc = similar(v)
+    JGradPars{R}(w,u,inv.(ntw.membrane_taus),ddgu_alloc)
 end
 
 function _jacobian!(J,gradpars::Union{Nothing,JGradPars{R}},
@@ -324,31 +344,6 @@ function spectral_abscissa(u,rn::RecurrentNetwork)
     return maximum(real.(eigvals(J)))
 end
 
-# let's generate the attractors here
-
-
-"""
-        lognorm_reparametrize(m,std) -> distr::LogNormal
-# parameters
-  + `m`   sample mean
-  + `std` sample std
-"""
-function lognorm_reparametrize(m,std)
-    vm2= (std/m)^2
-    μ = log(m / sqrt(1. + vm2))
-    σ = sqrt(log( 1. + vm2))
-    return LogNormal(μ,σ)
-end
-
-function make_attractors(ntot,natt,gainf::IOFunction{R};
-        mu_r=5.0,std_r=2.0) where R
-    distr = lognorm_reparametrize(mu_r,std_r)
-    attr_r = rand(distr,(ntot,natt))
-    attr_u = ioinv.(attr_r,gainf)
-    return (attr_r,attr_u)
-end
-make_attractors(ntot,natt,ntw::RecurrentNetwork;mu_r=5.0,std_r=2.0) =
-    make_attractors(ntot,natt,ntw.iofunction;mu_r=mu_r,std_r=std_r)
 
 
 # Dynamics
@@ -420,6 +415,47 @@ function run_network_to_convergence(ntw::RecurrentNetwork{R},
     end
     ret_r = ntw.iofunction.(u_out)
     return u_out,ret_r
+end
+
+# here I make the AttractorNetwork, the one with attractors
+
+"""
+        lognorm_reparametrize(m,std) -> distr::LogNormal
+# parameters
+  + `m`   sample mean
+  + `std` sample std
+"""
+function lognorm_reparametrize(m,std)
+    vm2= (std/m)^2
+    μ = log(m / sqrt(1. + vm2))
+    σ = sqrt(log( 1. + vm2))
+    return LogNormal(μ,σ)
+end
+
+function make_attractors(ntot,natt,gainf::IOFunction{R};
+        mu_r=5.0,std_r=2.0) where R
+    distr = lognorm_reparametrize(mu_r,std_r)
+    attr_r = rand(distr,(ntot,natt))
+    attr_u = ioinv.(attr_r,gainf)
+    return (attr_r,attr_u)
+end
+make_attractors(ntot,natt,ntw::RecurrentNetwork;mu_r=5.0,std_r=2.0) =
+    make_attractors(ntot,natt,ntw.iofunction;mu_r=mu_r,std_r=std_r)
+
+
+function AttractorNetwork(natt::I,ne::I,ni::I;
+        gfun::Union{Nothing,G}=nothing,
+        taus::Union{Nothing,V}=nothing,
+        external_current::Union{Nothing,V}=nothing,
+        W::Union{Nothing,M}=nothing,
+        noautapses::Bool = true ,
+        mu_attr::Real=5.0,
+        std_attr::Real=2.0) where
+                {I<:Integer, G<:IOFunction,M<:AbstractMatrix,V<:AbstractVector}
+  base=BaseNetwork(ne,ni;gfun=gfun,taus=taus,external_current=external_current,
+    W=W,noautapses=noautapses)
+  _,attr_u = make_attractors(ne+ni,natt,base;mu_r=mu_attr,std_r=std_attr)
+  return AttractorNetwork(base,attr_u)
 end
 
 end # module
