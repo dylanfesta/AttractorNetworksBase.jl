@@ -409,7 +409,7 @@ function run_network_to_convergence(ntw::RecurrentNetwork{R},
     u_out = out.u[end]
     t_out = out.t[end]
     if isapprox(t_out,t_end; atol=0.05)
-        vel = du_nonoise(u_out,ntw)
+        vel = velocity(u_out,ntw)
         @warn "no convergence after max time $t_end"
         @info "the norm (divided by n) of the velocity is $(norm(vel)/length(vel)) "
     end
