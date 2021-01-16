@@ -183,6 +183,7 @@ struct AttractorNetwork{R} <: RecurrentNetwork{R}
 end
 
 n_neurons(rn::RecurrentNetwork) = size(rn.weights,1)
+n_attractors(rn::AttractorNetwork) = size(rn.attractors_u,2)
 Base.ndims(rn::RecurrentNetwork)=n_neurons(rn)
 
 #Base.Broadcast.broadcastable(g::RecurrentNetwork)=Ref(g)
@@ -211,8 +212,8 @@ end
 @inline function ioprime(u::AbstractVector{R},nt::RecurrentNetwork{R}) where R<:Real
     return ioprime!(similar(u),u,nt)
 end
-@inline function ioprimeprime!(dest::Vector{R},u::AbstractVector{R},
-    nt::RecurrentNetwork{R}) where R<:Real
+@inline function ioprimeprime!(dest::AbstractVector{R},
+    u::AbstractVector{R},nt::RecurrentNetwork{R}) where R<:Real
   for i in eachindex(dest)
       dest[i]=ioprimeprime(u[i],nt.iofunction)
   end
@@ -283,7 +284,7 @@ function AttractorNetwork(bn::BaseNetwork{R},attr::Matrix{R}) where R
         bn.membrane_taus,bn.external_input)
 end
 
-function velocity!(dest::AbsrtractVector{R},u::AbstractVector{R},
+function velocity!(dest::AbstractVector{R},u::AbstractVector{R},
         gu::AbstractVector{R},rn::RecurrentNetwork{R}) where {R<:Real,V<:Vector{R}}
     copy!(dest, rn.external_input)
     dest .-= u  #  v_out <-  - u +  h

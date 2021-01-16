@@ -1,9 +1,8 @@
 using AttractorNetworksBase ; const A=AttractorNetworksBase
 using Test
 using Calculus,LinearAlgebra,Statistics
-using Random
+using Random ; Random.seed!(1)
 const _rtol = 1E-4
-Random.seed!(1)
 
 function test_Jgradient_weights(utest,ntw::A.BaseNetwork)
     J=A.jacobian(utest,ntw)
@@ -157,12 +156,12 @@ end
 
 @testset "Making attractors" begin
     ne,ni = 200,100
-    natt=400
-    ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(1.23))
+    natt=431
     ntw = A.AttractorNetwork(natt,ne,ni ;
         gfun=A.IOQuad(3.45),mu_attr=3.23,std_attr=2.2)
     attr_u = ntw.attractors_u
     attr_r = ntw.iofunction.(attr_u)
     @test isapprox(mean(attr_r),3.23;atol=0.05)
     @test isapprox(std(attr_r),2.2;atol=0.1)
+    @test A.n_attractors(ntw) == natt
 end
