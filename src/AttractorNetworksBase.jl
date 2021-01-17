@@ -53,29 +53,9 @@ end
 end
 
 
-struct IORelu{T} <:IOFunction{T}
-end
-
-g!(x_dest::AbstractVector,x,gf::IOFunction) = broadcast!(gf, x_dest,x)
-dg!(x_dest::AbstractVector,x,gf::IOFunction) = broadcast!(_x->dg(_x,gf), x_dest,x)
-ddg!(x_dest::AbstractVector,x,gf::IOFunction) = broadcast!(_x->ddg(_x,gf), x_dest,x)
-ig!(x_dest::AbstractVector,x,gf::IOFunction) = broadcast!(_x->ig(_x,gf), x_dest,x)
-
-
-@inline function dg(x,gf::IOQuad)
-    ex= exp(x)
-    return gf.α * 2.0ex*log(1. + ex)/(1. + ex)
-end
-@inline function ddg(x,gf::IOQuad)
-    ex= exp(x)
-    oex= 1. + ex
-    return 2.0*gf.α*ex*(log(oex)+ex) / (oex*oex)
-end
-
-(gf::IOId)(x) = x
-ig(y,gf::IOId) = y
-dg(x,gf::IOId) = 1.0
-ddg(x,gf::IOId) = 0.0
+# struct IORelu{T} <:IOFunction{T}
+# end
+#
 
 """
         populations(ne::I,ni::I) where I<:Integer -> (pe::BitArray,pi::BitArray)
@@ -195,7 +175,7 @@ Base.copy(ntw::AttractorNetwork{R}) where R =
     AttractorNetwork{R}( (copy(getfield(ntw,n))
                 for n in fieldnames(AttractorNetwork) )...)
 
-@inline function iofun!(dest::Vector{R},u::AbstractVector{R},
+@inline function iofunction!(dest::AbstractVector{R},u::AbstractVector{R},
     nt::RecurrentNetwork{R}) where R<:Real
   for i in eachindex(dest)
       dest[i]=nt.iofunction(u[i])
@@ -285,11 +265,12 @@ function AttractorNetwork(bn::BaseNetwork{R},attr::Matrix{R}) where R
 end
 
 function velocity!(dest::AbstractVector{R},u::AbstractVector{R},
-        gu::AbstractVector{R},rn::RecurrentNetwork{R}) where {R<:Real,V<:Vector{R}}
+        gu::AbstractVector{R},rn::RecurrentNetwork{R}) where R<:Real
     copy!(dest, rn.external_input)
     dest .-= u  #  v_out <-  - u +  h
-    LinearAlgebra.BLAS.gemv!('N',1.0,rn.weights,gu,1.0,dest) # W*g(v) - v + h
-    return normalize_membrane_taus!(dest,rn) # ( W*g(v) - v + h) / taus
+    LinearAlgebra.BLAS.gemv!('N',1.0,rn.weights,gu,1.0,dest) # W*g(u) - u + h
+    normalize_membrane_taus!(dest,rn) # ( W*g(u) - u + h) / taus
+    return dest
 end
 velocity(u,rn) = velocity!(similar(u),u,rn.iofunction.(u), rn)
 
@@ -298,61 +279,63 @@ velocity(u,rn) = velocity!(similar(u),u,rn.iofunction.(u), rn)
 # Jacobian stuff ! Compute and derivatives!
 # let's define (and test) the derivatives of the jacobian here!
 
-struct JGradPars{R}
-    weights::Matrix{R}
-    u::Matrix{R}
+struct JAlloc{R}
+    dgu::Vector{R}
+    ddgu::Vector{R}
     inv_taus::Vector{R}
-    ddgu_alloc::Vector{R}
 end
-function JGradPars(ntw::Union{AttractorNetwork{R},BaseNetwork{R}}) where R
-    w = similar(ntw.weights)
-    u = similar(ntw.weights)
-    v = similar(ntw.membrane_taus)
-    ddgu_alloc = similar(v)
-    JGradPars{R}(w,u,inv.(ntw.membrane_taus),ddgu_alloc)
+function JAlloc(ntw::RN) where {R<:Real,RN<:RecurrentNetwork{R}}
+    dgu = similar(ntw.membrane_taus)
+    ddgu = similar(ntw.membrane_taus)
+    JAlloc{R}(dgu,ddgu,inv.(ntw.membrane_taus))
 end
 
-function _jacobian!(J,gradpars::Union{Nothing,JGradPars{R}},
-            u,dgu,ntw::RecurrentNetwork{R}) where R
-    broadcast!(*,J, ntw.weights, transpose(dgu)) # multiply columnwise
-    J -= I #subtract diagonal
-    #normalize by taus, rowwise
-    broadcast!(/,J,J,ntw.membrane_taus)
-    isnothing(gradpars) && return J
-    # GRADIENTS !  W first
-    gradpars.weights .= gradpars.inv_taus * transpose(dgu)
-    #broadcast!(/,gradpars.weights,transpose(dgu),ntw.membrane_taus)
-    # now u
-    ddg!(gradpars.ddgu_alloc,u,ntw.iofunction)
-    broadcast!(*,gradpars.u,gradpars.inv_taus,
-        ntw.weights, transpose(gradpars.ddgu_alloc))
-    return J
+function jacobian!(Jdest::AbstractMatrix{R},
+        Wgrad::Union{Nothing,Matrix{R}},ugrad::Union{Nothing,Matrix{R}},
+        u::AbstractVector{R},ntw::RecurrentNetwork{R},
+        Jallocs::Union{Nothing,JAlloc{R}}=nothing) where R
+  Jallocs=something(Jallocs,JAlloc(ntw))
+  ioprime!(Jallocs.dgu,u,ntw)
+  broadcast!(*,Jdest, ntw.weights, transpose(Jallocs.dgu)) # multiply columnwise
+  for i in 1:n_neurons(ntw)
+    Jdest[i,i] -= 1.0 #subtract diagonal
+  end
+  #normalize by taus, rowwise
+  broadcast!(/,Jdest,Jdest,ntw.membrane_taus)
+  # GRADIENTS ! with respect to  W first
+  if !isnothing(Wgrad)
+    broadcast!(*,Wgrad,Jallocs.inv_taus,transpose(Jallocs.dgu))
+  end
+  # now with respect to u
+  if !isnothing(ugrad)
+    ioprimeprime!(Jallocs.ddgu,u,ntw)
+    #broadcast!(/,Jallocs.weights,transpose(dgu),ntw.membrane_taus)
+    broadcast!(*,ugrad,Jallocs.inv_taus,
+      ntw.weights, transpose(Jallocs.ddgu))
+  end
+  return Jdest
 end
 
 """
         jacobian(u,rn::RecurrentNetwork)
 Jacobian matrix of the
 """
-@inline function jacobian(u,rn::RecurrentNetwork)
-    J = similar(rn.weights)
-    dgu = ioprime(u,rn)
-    return _jacobian!(J,nothing,u,dgu,rn::RecurrentNetwork)
+@inline function jacobian(u::AbstractVector{R},rn::RecurrentNetwork{R}) where R
+    return jacobian!(similar(rn.weights),nothing,nothing,u,rn)
 end
+
 
 function spectral_abscissa(u,rn::RecurrentNetwork)
     J=jacobian(u,rn)
     return maximum(real.(eigvals(J)))
 end
 
-
-
 # Dynamics
-
 function run_network(ntw::RecurrentNetwork{R},r_start::Vector{R},
     t_end::Real; verbose::Bool=false,stepsize=0.05) where R<:Real
   u0=ioinv(r_start,ntw)
-  ioprime_alloc=similar(r_start)
-  f(du,u,p,t) = velocity!(du,u,ioprime!(ioprime_alloc,u,ntw),ntw)
+  iofun_alloc=similar(r_start)
+  f(du,u,p,t) = velocity!(du,u,iofunction!(iofun_alloc,u,ntw),ntw)
   prob = ODEProblem(f,u0,(0.,t_end))
   solv = solve(prob,Tsit5();verbose=verbose,saveat=stepsize)
   ret_u = hcat(solv.u...)
@@ -364,8 +347,8 @@ function run_network_noise(ntw::RecurrentNetwork{R},
     r_start::Vector{R},noiselevel::Real,t_end::Real;
     verbose::Bool=false,stepsize=0.05) where R<:Real
   u0=ioinv(r_start,ntw)
-  ioprime_alloc=similar(r_start)
-  f(du,u,p,t) = velocity!(du,u,ioprime!(ioprime_alloc,u,ntw),ntw)
+  iofun_alloc=similar(r_start)
+  f(du,u,p,t) = velocity!(du,u,iofunction!(iofun_alloc,u,ntw),ntw)
   σ_f(du,u,p,t) = fill!(du,noiselevel)
   prob = SDEProblem(f,σ_f,u0,(0.,t_end))
   solv =  solve(prob,EM();verbose=verbose,dt=stepsize)
@@ -376,7 +359,7 @@ end
 
 """
         run_network_to_convergence(rn::RecurrentNetwork,r_start::Vector{<:Real} ;
-                t_end=80. , veltol=1E-4)
+                t_end=80. , veltol=1E-1)
 Runs the network as described in [`run_network_nonoise`](@ref), but stops as soon as
 `norm(v) / n < veltol` where `v` is the velocity at time `t`.
 If this condition is not satisfied (no convergence to attractor), it runs until `t_end` and prints a warning.
@@ -403,7 +386,7 @@ function run_network_to_convergence(ntw::RecurrentNetwork{R},
     cb=DiscreteCallback(condition,affect!)
     ode_solver = Tsit5()
     ioprime_alloc=similar(r_start)
-    f(du,u,p,t) = velocity!(du,u,ioprime!(ioprime_alloc,u,ntw),ntw)
+    f(du,u,p,t) = velocity!(du,u,iofunction!(ioprime_alloc,u,ntw),ntw)
     prob = ODEProblem(f,u0,(0.,t_end))
     out = solve(prob,Tsit5();verbose=false,callback=cb)
     u_out = out.u[end]

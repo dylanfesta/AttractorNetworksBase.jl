@@ -4,50 +4,38 @@ using Calculus,LinearAlgebra,Statistics
 using Random ; Random.seed!(1)
 const _rtol = 1E-4
 
-function test_Jgradient_weights(utest,ntw::A.BaseNetwork)
-    J=A.jacobian(utest,ntw)
-    gpars = A.JGradPars(ntw)
+function test_Jgradient(utest::Vector{R},ntw::A.BaseNetwork) where R
+    Jalloc = A.JAlloc(ntw)
+    gradW=similar(ntw.weights)
+    gradu=similar(ntw.weights)
+    J=similar(gradW)
     # analytic gradient
-    dgu = A.ioprime.(utest,ntw.iofunction)
-    A._jacobian!(J,gpars,utest,dgu,ntw)
-    grad_ana = vec(gpars.weights)
-    # numerical gradient
-    ntw2 = copy(ntw)
-    grad_num = similar(grad_ana)
+    A.jacobian!(J,gradW,gradu,utest,ntw,Jalloc)
+    # numerical gradient weights
+    grad_numW = similar(gradW)
+    ntw2=copy(ntw)
     for ij in eachindex(ntw2.weights)
-        function miniobj(w)
+        function gradfun(w)
             ntw2.weights[ij] = w
-            return A.jacobian(utest,ntw2)[ij]
+            A.jacobian!(J,nothing,nothing,utest,ntw2,Jalloc)
+            return J[ij]
         end
-        grad_num[ij] = Calculus.gradient(miniobj,ntw2.weights[ij])
+        grad_numW[ij] = Calculus.gradient(gradfun,ntw2.weights[ij])
     end
-    return grad_ana,grad_num
-end
-
-function test_Jgradient_u(utest,ntw::A.BaseNetwork)
-    J=A.jacobian(utest,ntw)
-    gpars = A.JGradPars(ntw)
-    # analytic gradient
-    dgu = A.ioprime.(utest,ntw.iofunction)
-    A._jacobian!(J,gpars,utest,dgu,ntw)
-    grad_ana = vec(gpars.u)
-    # numerical gradient
-    grad_num = similar(gpars.u)
-    for lj in CartesianIndices(gpars.u)
+    # numerical gradient u
+    grad_numu = similar(gradu)
+    for lj in CartesianIndices(gradu)
         (j,l)=Tuple(lj)
-        function miniobj(u)
+        function gradfun(u)
             u2 = copy(utest)
             u2[l]=u
-            return A.jacobian(u2,ntw)[lj]
+            A.jacobian!(J,nothing,nothing,u2,ntw,Jalloc)
+            return J[lj]
         end
-        grad_num[lj] = Calculus.gradient(miniobj,utest[l])
+        grad_numu[lj] = Calculus.gradient(gradfun,utest[l])
     end
-    grad_num = vec(grad_num)
-    return grad_ana,grad_num
+    return gradW,grad_numW,gradu,grad_numu
 end
-
-
-
 
 ##
 
@@ -130,12 +118,17 @@ end
     ntot = ne+ni
     ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.123) )
     utest = randn(ntot)
+    anaW,numW,anau,numu=test_Jgradient(utest,ntw)
+    @test all(isapprox.(anaW,numW;rtol=1E-4))
+    @test all(isapprox.(anau,numu;rtol=1E-4))
+    ne,ni = 23,12
+    ntot = ne+ni
+    ntw = A.BaseNetwork(ne,ni ; gfun=A.IOId{Float64}() )
+    utest = randn(ntot)
     # weights
-    grad_ana,grad_num = test_Jgradient_weights(utest,ntw)
-    @test all(isapprox.(grad_ana,grad_num;rtol=1E-4))
-    #currents
-    grad_ana,grad_num = test_Jgradient_u(utest,ntw)
-    @test all(isapprox.(grad_ana,grad_num;rtol=1E-4))
+    anaW,numW,anau,numu=test_Jgradient(utest,ntw)
+    @test all(isapprox.(anaW,numW;rtol=1E-4))
+    @test all(isapprox.(anau,numu;rtol=1E-4))
 end
 
 @testset "Dynamics" begin

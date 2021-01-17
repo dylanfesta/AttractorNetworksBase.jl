@@ -6,76 +6,84 @@ using Calculus
 using BenchmarkTools, Cthulhu
 using Random
 using Test
-using Statistics
+using Statistics,LinearAlgebra
 Random.seed!(0)
 
-##
-
-function test_Jgradient_weights(utest,ntw::A.BaseNetwork)
-    J=A.jacobian(utest,ntw)
-    gpars = A.JGradPars(ntw)
-    # analytic gradient
-    dgu = A.dg.(utest,ntw.iofunction)
-    A._jacobian!(J,gpars,utest,dgu,ntw)
-    grad_ana = vec(gpars.weights)
-    # numerical gradient
-    ntw2 = copy(ntw)
-    grad_num = similar(grad_ana)
-    for ij in eachindex(ntw2.weights)
-        function miniobj(w)
-            ntw2.weights[ij] = w
-            return A.jacobian(utest,ntw2)[ij]
-        end
-        grad_num[ij] = Calculus.gradient(miniobj,ntw2.weights[ij])
-    end
-    return grad_ana,grad_num
+using Plots ; theme(:dark)
+function plotvs(x::AbstractArray{<:Real},y::AbstractArray{<:Real})
+  x,y=x[:],y[:]
+  @info """
+  The max differences between the two are $(extrema(x .-y ))
+  """
+  plt=plot()
+  scatter!(plt,x,y;leg=false,ratio=1,color=:white)
+  lm=xlims()
+  plot!(plt,identity,range(lm...;length=3);linestyle=:dash,color=:yellow)
+  return plt
 end
-
-function test_Jgradient_u(utest,ntw::A.BaseNetwork)
-    J=A.jacobian(utest,ntw)
-    gpars = A.JGradPars(ntw)
+function test_Jgradient(utest::Vector{R},ntw::A.BaseNetwork) where R
+    Jalloc = A.JAlloc(ntw)
+    gradW=similar(ntw.weights)
+    gradu=similar(ntw.weights)
+    J=similar(gradW)
     # analytic gradient
-    dgu = A.dg.(utest,ntw.iofunction)
-    A._jacobian!(J,gpars,utest,dgu,ntw)
-    grad_ana = vec(gpars.u)
-    # numerical gradient
-    grad_num = similar(gpars.u)
-    for lj in CartesianIndices(gpars.u)
+    A.jacobian!(J,gradW,gradu,utest,ntw,Jalloc)
+    # numerical gradient weights
+    grad_numW = similar(gradW)
+    ntw2=copy(ntw)
+    for ij in eachindex(ntw2.weights)
+        function gradfun(w)
+            ntw2.weights[ij] = w
+            A.jacobian!(J,nothing,nothing,utest,ntw2,Jalloc)
+            return J[ij]
+        end
+        grad_numW[ij] = Calculus.gradient(gradfun,ntw2.weights[ij])
+    end
+    # numerical gradient u
+    grad_numu = similar(gradu)
+    for lj in CartesianIndices(gradu)
         (j,l)=Tuple(lj)
-        function miniobj(u)
+        function gradfun(u)
             u2 = copy(utest)
             u2[l]=u
-            return A.jacobian(u2,ntw)[lj]
+            A.jacobian!(J,nothing,nothing,u2,ntw,Jalloc)
+            return J[lj]
         end
-        grad_num[lj] = Calculus.gradient(miniobj,utest[l])
+        grad_numu[lj] = Calculus.gradient(gradfun,utest[l])
     end
-    grad_num = vec(grad_num)
-    return grad_ana,grad_num
+    return gradW,grad_numW,gradu,grad_numu
 end
 
 
-##
-
-
-ne,ni = 200,100
-natt=400
-ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(1.23))
-ntw = A.AttractorNetwork(natt,ne,ni ;
-    gfun=A.IOQuad(3.45),mu_attr=3.23,std_attr=2.2)
-attr_u = ntw.attractors_u
-attr_r = ntw.iofunction.(attr_u)
-
-@test isapprox(mean(attr_r),3.23;atol=0.05)
-@test isapprox(std(attr_r),2.2;atol=0.1)
-
-
-
-##
-
-
-ne,ni = 20,23
+## linear stable dynamcs goes to zero
+ne,ni = 59,33
 ntot = ne+ni
-ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.02))
+ntw = A.BaseNetwork(ne,ni ; gfun=A.IOId{Float64}())
+ntw.weights .= 0.3.*randn(ntot)
+B = ntw.weights - I
+ntw.external_input .= 0.0
+ntw.membrane_taus .= 1.0
+r_start = 30.0.*randn(ntot)
+
+# check velocity
+A.velocity(r_start,ntw)
+
+
+u_end,r_end=A.run_network_to_convergence(ntw,r_start;veltol=1E-5)
+
+
+vel_test=similar(u_end)
+A.velocity!(vel_test,u_end,ntw.iofunction.(u_end),ntw)
+
+
+t,rdyn,_=A.run_network(ntw,r_end,4.0)
+
+plot(t,rdyn[4,:];leg=false)
+
+
+
+
+##
 fill!(ntw.weights,0.0)
 u_start = randn(A.ndims(ntw))
 r_start = ntw.iofunction.(u_start)
@@ -94,31 +102,6 @@ t,ut,rt=A.run_network(ntw,r_end,1.0)
 
 ##
 
-gtest = A.IOQuad(1.133)
-
-gtest(0.0)
-
-xtest = range(-1,5.0 ; length=100)
-
-plot(x->gtest(x),xtest ; leg=false, linewidth=3)
-
-
-descend_code_warntype(gtest,Tuple{Float64})
-##
-
-ne,ni = 20,23
-ntot = ne+ni
-ntw = A.BaseNetwork(ne,ni ; gfun=A.IOQuad(0.02))
-xtest = range(-1,5.0 ; length=100)
-xfill = similar(xtest)
-A.iofun!(similar(xtest),xtest,ntw)
-A.iofunB!(similar(xtest),xtest,ntw)
-
-@btime A.iofun!($xfill,$xtest,$ntw)
-@btime A.ioprime!($xfill,$xtest,$ntw)
-
-
-@btime A.iofunB!($xfill,$xtest,$ntw)
 
 
 ##
