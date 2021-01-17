@@ -384,9 +384,8 @@ function run_network_to_convergence(ntw::RecurrentNetwork{R},
     end
     u0=ioinv(r_start,ntw)
     cb=DiscreteCallback(condition,affect!)
-    ode_solver = Tsit5()
-    ioprime_alloc=similar(r_start)
-    f(du,u,p,t) = velocity!(du,u,iofunction!(ioprime_alloc,u,ntw),ntw)
+    iofun_alloc=similar(r_start)
+    f(du,u,p,t) = velocity!(du,u,iofunction!(iofun_alloc,u,ntw),ntw)
     prob = ODEProblem(f,u0,(0.,t_end))
     out = solve(prob,Tsit5();verbose=false,callback=cb)
     u_out = out.u[end]
