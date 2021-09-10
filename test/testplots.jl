@@ -1,5 +1,4 @@
-using Pkg
-Pkg.activate(joinpath(@__DIR__(),".."))
+push!(LOAD_PATH, abspath(@__DIR__,".."))
 using Plots
 using AttractorNetworksBase ; const A = AttractorNetworksBase
 using Calculus
